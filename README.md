@@ -12,7 +12,7 @@ This is a repository to showcase skills, share projects and track my progress in
 - [About](#about)
 - [Portfolio Projects](#portfolio_projects)
   - Python
-    - [Predicting song chracteristics that contribute to song popularity](https://github.com/LluisQN/Data-Analysis-Portfolio/blob/main/Predicting%20song%20popularity%20in%20Spotify.ipynb).
+    - [Predicting song chracteristics that contribute to song popularity](https://github.com/LluisQN/Data-Analysis-Portfolio/blob/main/Spotify%20popularity.ipynb)
   - R
   - PowerBI     
 
