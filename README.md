@@ -12,12 +12,16 @@ This is a repository to showcase skills, share projects and track my progress in
 - [About](#about)
 - [Portfolio Projects](#portfolio_projects)
   - Python
-    - [What characteristics make a song popular in Spotify?](https://github.com/LluisQN/Data-Analysis-Portfolio/blob/main/Spotify%20popularity.ipynb)
+    - [Analyzing the characteristics that make a Spotify song popular](#Analyzing the characteristics that make a Spotify song popular)
   - R
     - [What are the main factors contributing to heart disease?](https://github.com/LluisQN/Data-Analysis-Portfolio/blob/main/Predicting%20Heart%20Disease.Rmd)
   - PowerBI     
 
 ## Portfolio Projects
+In this section I will list data analytics projects briefly describing the technology stack used to solve cases.
 
+## Analyzing the characteristics that make a Spotify song popular
+**Code:** [What characteristics make a song popular in Spotify?](https://github.com/LluisQN/Data-Analysis-Portfolio/blob/main/Spotify%20popularity.ipynb)
+**Description:** The project focused on analyzing a dataset of songs from Spotify. The dataset included song popularity score, numbr of tracks in album, danceability, energy, key loudness, mode, and other relevant information. The project involved loading the data, cleaning and preprocessing it, performing exploratory data analysis (EDA) and developing several machine learning methodologies to define which are the most relevant song characteristics to become popular..
 
 
