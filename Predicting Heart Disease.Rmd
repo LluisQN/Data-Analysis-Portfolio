@@ -1,0 +1,1051 @@
+---
+title: "Predicting heartdisease"
+author: "Lukas Diex, LLuís Quintana, Caroline Nakowitsch"
+date: "2024-02-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+librarian::shelf(dplyr, caret, precrec, pROC, ggplot2, xgboost, rsample, knitr, kableExtra, rpart, rpart.plot, tidyverse, tidyr, data.table, stringr, corrplot)
+
+```
+
+# Introduction
+In recent years, health economics has emerged as a dynamic field of research, gaining increasing attention due to its critical role in shaping healthcare policies and improving the overall well-being of populations. This research project aims to investigate the factors influencing heart disease, using US-American health data from the Behavioral Risk Factor Surveillance System (BRFSS) Survey 2022, provided by the Centers for Disease Control and Prevention (CDC). Specifically, we intend to employ a set of machine learning algorithms to analyze the BRFSS dataset.
+
+While there is extensive research on this topic, little work has been carried out with machine learning techniques. Machine learning models with high predictive power can help determine the best course of treatment for a patient with a heart failure diagnosis. This approach assists doctors in making early diagnoses that reduce costs (G C et al., 2019). Previous research has achieved a 90.16% accuracy with a logistic regression and 90% with AdaBoost (Samineni, 2023) or 87% using k-Nearest Neighbors Classifier (Kamboj, 2018). Already existing literature agrees on elevated cholesterol levels, high blood pressure, diabetes, obesity, smoking and the lack of physical activity as main causes of cardiovascular heart diseases (CHD). However, the CDC's dataset does not cover all of those causes as variables - cholesterol and blood pressure are missing. Therefore, this seminar paper deals with two specific questions. By using the CDC's dataset we first verify the main causes already investigated by the literature using both random forest and XG-boost models. Secondly, we show what other factors can be identified by applying these methods to the CDC's dataset. As this dataset also features information about COVID-19-infection rate we can also contribute to currently relevant topics within this field of research.
+
+We intend to delevop a model that predicts, which individuals have higher chances of suffering from a heart disease and model the main causes of having a heart disease with machine learning techniques such as the random forest or XGBoost algorithms. The study will explore key determinants of heart disease, such as demographic factors, lifestyle choices, and pre-existing health conditions. In the context of medical data analysis, where the consequences of false negatives (missed diagnoses) can be severe, sensitivity should be prioritized over specificity. Sensitivity measures the ability of a model to correctly identify positive cases, in our case the presence of heart disease. A model with high sensitivity, even at the expense of specificity, minimizes the risk of false negatives and maximizes the detection of true positives. Therefore, in our project, we intend to build a conservative model with high sensitivity, as we rather be too cautious than to overlook a critical condition. 
+
+# Data, sources and exploration
+The data used within this work is part of the 2022 version of the Behavioral Risk Factor Surveillance System from the Centre for Disease Control and Prevention in the US. During this year, data was collected in 50 states of the US as well as the District of Columbia, Guam, the Commonwealth of Puerto Rico, and the US Virgin Islands, using land-line and cellular phone based interviews. Therefore, within this document the term “state” refers to all spatial units participating in the BRFSS. In order to circumvent sampling biases, the CDC applied complex sampling weights to the dataset.
+We would like to acknowledge that due to constraints posed by the size of the original dataset, we encountered challenges in transforming it for our analysis. As a solution, we opted to utilize a reduced dataset sourced from Kaggle, which contains the most prominent health variables essential for our research objectives. While the original dataset features about 445.000 observations of more than 300 independent variables, our version is already tailored for the specific use of analysing heart disease risk and was published on Kaggle. Therefore, our version only contains 246.022 observations of 40 variables. Moreover, a thorough data cleaning process is already applied to the data. Therefore, we do not have to deal with missing data any longer.
+
+Further information about the data can be found here:
+https://www.cdc.gov/brfss/annual_data/2022/pdf/Overview_2022-508.pdf
+
+The dataset we use consists of six numerical variables and 34 cateogrical variables. The tables below present the main summary statistics of the dataset. 
+
+```{r read data, echo=FALSE}
+# With na.strings we convert blank data from the categorical variables into NAs
+data1 <- read.csv("../01_input_data/data_2022.csv")
+```
+```{r numeric summary statistics, echo=FALSE} 
+summary(data1)
+# get numeric variables
+num_col <- data1 %>%
+  select_if(is.numeric)
+summary(num_col)
+# table of summary statistics
+sum_stat_num <- data.frame(
+  Variable = c("PhysicalHealthDays", "MentalHealthDays", "SleepHours", "HeightInMeters", 
+               "WeightInKilograms", "BMI"),
+  Min = c(0, 0, 1, 0.91, 28.12, 12.02),
+  Q1 = c(0, 0, 6, 1.63, 68.04, 24.27),
+  Median = c(0, 0, 7, 1.70, 81.65, 27.46),
+  Mean = c(4.119, 4.167, 7.021, 1.705, 83.62, 28.67),
+  Q3 = c(3, 4, 8, 1.78, 95.25, 31.89),
+  Max = c(30, 30, 24, 2.41, 292.57, 97.65)
+)
+# Print the table
+kable(sum_stat_num, align = "lcccccc", digits = 2, caption = "Summary statistics for numerical variables")
+```
+
+```{r categorical summary statistics, echo=FALSE}
+summary(data1)
+# get categorical variables
+cat_col <- data1 %>%
+  select_if(is.character) %>%
+  mutate_all(as.factor)
+
+# print table
+kable(summary(cat_col), align = "c", caption = "Summary statistics for categorical variables")
+```
+
+## Data visualisation
+### Dependent variable
+Luckily, not every person is having a heart disease over the course of their lifetime. It is even more unlikely to get a balanced sample from conducting survey interviews. Therefore, our first interest is in analyzing the dependent variable. As the piechart below shows, only 13.435 individuals, or 5% of observations did or still do suffer from heart disease, leading to an unbalanced sample distribution in the dependent variable. We will adress this problem by applin methods such as X, Y and Z. 
+
+```{r dependent vis, echo=FALSE}
+#Dependent variable ----
+#HadHeartAttack: only 13,435 (5.4%) observations of people having a heart attack.
+sum (data1$HadHeartAttack == "Yes")
+
+#Create a pie chart with percentages of observations that had a heart attack.
+dep_var <- data1 %>% 
+  group_by(HadHeartAttack) %>% 
+  count() %>% 
+  ungroup () %>% 
+  mutate (perc = `n` / sum (`n`)) %>% 
+  arrange (perc) %>% 
+  mutate(labels = scales :: percent (perc))
+
+ggplot(dep_var, aes(x = "", y = perc, fill = HadHeartAttack)) +
+  geom_col(color = "black") +
+  geom_label(aes(label = labels), color = c("white", "white"),
+             position = position_stack(vjust = 0.5), show.legend = FALSE) +
+  guides(fill = guide_legend(title = "Answer")) +
+  coord_polar(theta = "y") + 
+  theme_void() +
+  scale_fill_manual(values = c("darkcyan", "brown3")) +
+  theme(
+    legend.title = element_text(color = "black", size = 12, face = "bold"),  # Legend title customization
+    plot.title = element_text(color = "black", size = 14, face = "bold", hjust = 0.5),  # Title customization
+    plot.margin = margin(20, 20, 20, 20)  # Adjust plot margins
+  ) +
+  ggtitle("Sample imbalance")  # Adding a title to the graph
+
+
+ggsave ("03_output_data/dep_var.plot.png", width = 11.4, height = 7, bg = "white")
+```
+
+### Independent variables 
+Regarding numerical independent variables the density curves below indicate that having a higher BMI, body weight and the amount of days devoted to physical and mental health reduce the chances of having a heart attack. However, the interpretation of sleeping hours and height of the person seems less clear. 
+
+```{r independent vis, echo=FALSE}
+# Create two different datasets, for numerical and 
+# categorical variables in order to carry out the histograms.
+
+num_vars <- data1 %>% 
+  select (where (is.numeric), HadHeartAttack) %>% 
+  mutate(as.factor(HadHeartAttack)) %>% 
+  select(-HadHeartAttack) %>% 
+  rename('HadHeartAttack' = 'as.factor(HadHeartAttack)')
+
+##Numerical Variables----
+vars <- c('BMI', 'WeightInKilograms', 'SleepHours', 'PhysicalHealthDays', 'MentalHealthDays', 'HeightInMeters')
+
+individual_plots <- list()
+
+for (i in vars) { 
+  p <- ggplot(num_vars, aes_string(x = i, fill = 'HadHeartAttack')) +
+    geom_density(alpha = 0.6) +
+    labs(fill = "Had a Heart Attack") +
+    scale_y_continuous(expand = expansion(mult = c(0, 0))) +
+    scale_x_continuous(expand = expansion(mult = c(0, 0))) +
+    theme_minimal() +
+    theme(
+      panel.grid = element_blank(),
+      axis.ticks = element_line(color = "black", size = 0.5),
+      axis.title.y = element_blank()
+    ) +
+    scale_fill_manual(values = c("darkcyan", "brown3"))
+  
+  individual_plots[[i]] <- p
+}
+
+combined_num_vars <- cowplot::plot_grid(plotlist = individual_plots, nrow = 3)
+
+combined_num_vars
+
+ggsave ("../03_output_data/dens_vis.png", width = 11.4, height = 7, bg = "white")
+```
+According to the literature (CDC) the main factors of heart disease are: high blood pressure, high cholesterol, diabetes, smoking, obesity, unhealthy diet, physical inactivity. While physical health days do not offer a clear picture we still have look on the other causes identified graphically.
+
+
+```{r smoking, echo=FALSE}
+#Smoking Status
+smoke <- ggplot(data1, aes(x = SmokerStatus, fill = HadHeartAttack)) +
+  geom_bar(position = "fill", width = 0.5) +
+  geom_text(
+    aes(label = scales::percent(..count.. / tapply(..count.., ..x.., sum)[..x..])),
+    stat = "count",
+    position = position_fill(vjust = 0.5)) +
+  labs(fill = "Had a Heart Attack") +
+  scale_y_continuous(labels = scales::comma_format(), expand = c(0, 0)) +
+  scale_x_discrete(labels = c("Every day", "Some days", "Former smoker", "Never"), expand = c(0, 0)) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1), 
+    axis.ticks = element_blank(),
+    plot.margin = margin(2, 2, 2, 2, "cm")
+  ) +
+  scale_fill_manual(values = c("darkcyan", "brown3"))
+smoke
+ggsave ("../03_output_data/smoke.png", width = 11.4, height = 7, bg = "white")
+```
+For smokers our sample shows that every day smokers have the highest risk of getting a heart disease. However, this does not confirm it's overall impact on actually getting one. This also holds for the other variables. This section only features visualizations of our sample data.
+
+```{r diabetes vis, echo=FALSE}
+#Diabetes  
+diabetes <- ggplot(data1, aes(x = HadDiabetes, fill = HadHeartAttack)) +
+  geom_bar(position = "fill", width = 0.5) +
+  geom_text(
+    aes(label = scales::percent(..count.. / tapply(..count.., ..x.., sum)[..x..])),    stat = "count",
+    position = position_fill(vjust = 0.5)) +
+  labs (fill = "Had a Heart Attack") +
+  scale_y_continuous(labels = scales::comma_format(), expand = c(0,0)) +
+  scale_x_discrete(labels = c ("No", "Pre-diabetes", "Yes", "Only during pregnancy"), expand = c(0,0)) +
+  theme_minimal() +
+  theme (
+    panel.grid = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1), 
+    axis.ticks = element_blank(),
+    plot.margin = margin (2,2,2,2, "cm")) +
+    scale_fill_manual(values = c ("darkcyan", "brown3")) 
+
+diabetes
+ggsave ("../03_output_data/diabets.png", width = 11.4, height = 7, bg = "white")
+```
+```{r physical activity, echo=FALSE}
+
+#Physical Activities  
+pa <- ggplot(data1, aes(x = PhysicalActivities, fill = HadHeartAttack)) +
+  geom_bar(position = "fill", width = 0.5) +
+  geom_text(
+    aes(label = scales::percent(..count.. / tapply(..count.., ..x.., sum)[..x..])),    stat = "count",
+    position = position_fill(vjust = 0.5)) +
+  labs (fill = "Had a Heart Attack") +
+  scale_y_continuous(labels = scales::comma_format(), expand = c(0,0)) +
+  scale_x_discrete(expand = c(0,0)) +
+    # scale_x_discrete(labels = c ("No", "Pre-diabetes", "Yes", "Only during pregnancy"), expand = c(0,0)) +
+  theme_minimal() +
+  theme (
+    panel.grid = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1), 
+    axis.ticks = element_blank(),
+    plot.margin = margin (2,2,2,2, "cm")) +
+  scale_fill_manual(values = c ("darkcyan", "brown3")) 
+pa
+ggsave ("../03_output_data/physical_activity.png", width = 11.4, height = 7, bg = "white")
+
+```
+
+We can observe how being a smoker, having diabetes and not practicing physical activities, increase the chances of having a heart attack.
+
+```{r correlation matrix, echo=FALSE}
+#Corr Matrix ----
+#Import the encoded dataset into all numerical values. The corr matrix requires numeric vars
+data_num <- read.csv("../02_intermediary_data/no_na_numeric.csv")
+
+#If we order the HadHeartAttack variable, we can obtain the most correlated vars with it.
+corr <- cor(data_num) 
+
+#We select the most correlated vars to represent them in the corr matrix plot.
+data_num <- data_num %>% 
+  select(HadHeartAttack, everything()) %>% 
+  select(c ( "HadHeartAttack", "PhysicalHealthDays", "HadAngina", "HadStroke", "HadCOPD", "HadKidneyDisease", "HadArthritis", "HadDiabetes", "DifficultyWalking", "ChestScan", "AgeCategory", "PneumoVaxEver"))
+
+corr <- cor (data_num) 
+
+
+
+corrplot <- corrplot(corr, type="upper", method = "circle", tl.cex = 1, tl.col = 'black', tl.srt=45)
+
+corrplot
+  
+# Save as PNG in a specific folder
+png("../03_output_data/corrplot.png", width = 800, height = 800)
+corrplot(corr, type = "upper", method = "circle", tl.cex = 1, tl.col = 'black', tl.srt = 45)
+dev.off()
+
+```
+For the correlation matrix we select variables that we expect to have the biggest correlation with our dependent variable. We can see only positive correlations. Heart disease is only considerably correlated with "Had Angina", which seems plausible as it in itself is a heart disease. 
+
+# Methodology
+In the following section, we will construct, compare, and select predictive machine learning models. We select models by evaluating their performance and determining the impact of different variables on the final model's efficacy for prediction.
+
+Whether a survey respondent has had a heart disease - the dependent variable - can either be of outcome "yes" or "no". Therefore, this analysis concerns a classification problem. Due to the complex dynamics that might lead to a heart disease, we already know that the two classes are not uniformly distributed. While for example smoking increases the risk of suffering from a heart disease, this does not have to be the case in general. Therefore, it is expected that the class of people that actually suffered from a heart disease is underrepresented, leading to class imbalance. The presence of such class imbalances implies serious consequences such as estimates becoming biased in favor of predicting the majority class. Furthermore, due to the class imbalance, evaluation metrics such as accuracy might be misleading. Overall, the model might focus on learning patterns from the majority class and may not generalize well to the minority class.In order to circumvent these issues resampling techniques are needed. More precisely, we will begin with under sampling as a method to increase class balance. As an alternative approach, we apply higher weights to the minority class to account for the class imbalance and thus increase the robustness of our predictions.
+
+As already mentioned in this proposal's introduction, in order to solve this classification problem, we will rely on classification trees based on majority voting as a method of random forests. Moreover, in order to decrease the variance of predictions, we will also address tree nodes such that we achieve a process of decorrelating the individual trees by forcing each split to consider only a random subset of the predictors. This process is especially useful as it prevents trees from always choosing the strongest predictor for the top split. An evaluation of the models will then be carried out by appropriate metrics such as precision, recall and the area under the ROC-curve. 
+
+Following the evaluation of our models, hyperparameter tuning processes will be needed in order to find the optimal number of trees, tree depth and subset of predictors considered at each split. However, as we don't have as of now, we cannot give a detailed explanation of these processes.
+
+# Analysis
+In the following section, we will construct, compare, and select predictive models, evaluating their performance and determining the impact of different variables on the final model's efficacy for prediction.
+
+## data set up 
+``` {r set up, echo=FALSE}
+# reading in the data
+data <- read.csv("../02_intermediary_data/no_na_numeric.csv")
+
+# factorizing data
+data <- data %>%
+  mutate_at(vars(-PhysicalHealthDays, -MentalHealthDays, -HeightInMeters, -WeightInKilograms, -BMI, - HadHeartAttack), as.factor) %>%
+  mutate(target = as.factor(if_else(HadHeartAttack == 0, "No", "Yes")))
+
+# get rid off the initial target variable
+data <- data[,-c(10)]
+
+# split data
+set.seed(123)
+split <- initial_split(data, prop = 0.8, strata = target)
+train_df <- training(split)
+test_df <- testing(split)
+
+```
+
+## basic model (caret)
+The first model we tried out is from the caret package, using the method "rpart". This way, we are able to produce the visualization of the model's decision tree in the end. We incldued a control parameter (control_rf), wich specifies repeated cross-validation with 10 folds and 10 repetitions. The tuning grid (tuning_grid) definies different values for the model complexity (cp) explored in the training of the model.   
+
+Firstly, a control object control_rf is defined using trainControl(), specifying the method for cross-validation (repeatedcv), the number of folds (number = 10), the number of repetitions (repeats = 10), enabling class probabilities (classProbs = TRUE), specifying the summary function (twoClassSummary), and enabling the saving of predictions (savePredictions = TRUE).
+
+```{r tuning cross validation, echo=FALSE}
+# control parameter
+control_rf <- trainControl(
+  method = "repeatedcv", 
+  number = 10,
+  repeats = 10,
+  classProbs = T,
+  summaryFunction = twoClassSummary,
+  savePredictions = T)
+```
+
+````{r caret model}
+# defining the tuning grid
+tuning_grid <- expand.grid(cp = c(0.001, 0.005, 0.01, 0.05))
+
+#using caret to build trees
+rf_caret <- train(
+  target ~ ., 
+  data = train_df, 
+  method = "rpart", 
+  trControl = control_rf,
+  tuneGrid = tuning_grid,
+  metric = "ROC")
+
+rf_caret
+
+#observing the tree
+tree <- rf_caret$finalModel
+rpart.plot(tree, box.palette="RdBu", nn=FALSE, type=2)
+````
+The results from our first try of training the model were quite unsatisfactory. However, from the tree we can observe first variable importance, with the variable "HadAngina" being the most important one, which is plausible since Angina is a heart disease. This is followed by having had a chest scan, removed teeth and had a stroke. 
+
+Regarding sample imbalance the data used was not taken care of. In order to account for this, we down sample the data. This means that the majority class is randomly under sampled to balance the class distribution. The R-function "downSample" randomly selects a subset of observations from the majority class to match the number of observations in the minority class. In our case, a subset from "No" is sampled to obtain the number of observations in "Yes". The results show that afterwards the number of observations for each outcome in the target variable is equal in the sample.
+
+```{r downsampled}
+# Performing downsampling
+downsampled_data <- downSample(
+  x = train_df[, -40],  # Exclude the target variable
+  y = train_df$target, 
+  yname = "target")
+
+## looking, wether the sample is now balanced
+# creating a data frame for plotting
+plot_data_down <- data.frame(
+  Class = levels(downsampled_data$target),
+  Count = table(downsampled_data$target)
+)
+# Create a bar chart
+ggplot(plot_data_down, aes(x = Class, y = Count.Freq, fill = Class)) +
+  geom_bar(stat = "identity", color = "black", show.legend = FALSE) +
+  labs(title = "Balanced sample distribution",
+       x = "Outcomes in target variable") +
+  theme_minimal()
+```
+
+
+```{r caret downsampled}
+# caret model with adjusted data
+rf_caret_down <- train(
+  target ~ ., 
+  data = downsampled_data, 
+  method = "rpart", 
+  trControl = control_rf,
+  tuneGrid = tuning_grid,
+  metric = "ROC")
+rf_caret_down
+
+#results
+basic_balanced_model <- rf_caret_down$finalModel
+summary(basic_balanced_model)
+rpart.plot(basic_balanced_model, box.palette="RdBu", nn=FALSE, type=2)
+```
+
+```{r prediction downsampled, echo=TRUE}
+# prediction
+test_df$prediction_rfcaret <- predict.train(
+  rf_caret_down, 
+  newdata = test_df, 
+  type = c("raw")
+)
+
+# confusion matrix
+confusion_rfcaret <- confusionMatrix(
+  test_df$target, 
+  test_df$prediction_rfcaret, 
+  positive = "Yes", 
+  mode="sens_spec"
+)
+
+confusion_rfcaret
+```
+We ran the first model again with the downsampled training set. The confusion matrix shows an accuracy of 83.56%, which is quite good, and very high specificity with 98.14%. Despite sensitivity having improved slightly in comparison to the first model, it is still rather low with 21.05%. There is much room for improvement. 
+
+```{r evaluation of the rpart model}
+
+# Extract performance metrics from the confusion matrix
+accuracy_rpart <- confusion_rfcaret$overall["Accuracy"]
+sensitivity_rpart <- confusion_rfcaret$byClass["Sensitivity"]
+specificity_rpart <- confusion_rfcaret$byClass["Specificity"]
+precision_rpart <- confusion_rfcaret$byClass['Pos Pred Value']
+recall_rpart <- confusion_rfcaret$byClass['Sensitivity']
+F1_rpart <- 2 * (precision_rpart * recall_rpart) / (precision_rpart + recall_rpart)
+
+# Model evaluation
+predicted_probs <- predict(rf_caret_down, newdata = test_df, type = "prob")[, "Yes"]
+
+# Create a precision-recall curve
+pr_curve_rpart <- evalmod(scores = predicted_probs, labels = as.factor(test_df$target), mode = "prcroc")
+
+# Plot the Precision-Recall curve
+plot(pr_curve_rpart, main = "Precision-Recall Curve", col = "red", lwd = 2)
+
+# plot the ROC curve and compute the AUC
+roc_curve_rpart <- roc(response = as.factor(test_df$target), predictor = predicted_probs)
+roc_auc_rpart <- auc(roc_curve_rpart)
+roc_auc_rpart
+```
+The area under the ROC curve (AUC) describes the discriminatory ability of a model. In other words, the ability to distinguish between positive and negative cases. For this model it is 85.1%, which is already quite high.
+
+## random forest with ranger
+In this chapter, a random forest model is constructed by using the method "ranger" with hyperparameter tuning and tuning grid (tuning_grid_v1). The tuning grid includes parameters such as mtry (number of variables randomly sampled at each split), which is set to 4, 6 and 9 as well as splitrule (the splitting criterion, which is set to "gini", standing for Gini impurity), and min.node.size (minimum node size for terminal nodes), which is a vector of 5, 10 and 15. Regarding mtry it is said that the optimal number equals the square oot of all the variables in the data set. Since there are 40 predictors in the training data, the optimal number of variables randomly sampled at each split would be 6. However, we included a vector of possible choices to ensure not to miss opprotunities for model improvement. The object control_rf determines the cross validation used. For this model repeated cross-validation with ten folds and ten repeats is applied as specified before.
+
+````{r model ranger downsampled}
+
+# tuning grid
+tuning_grid_v1 <- expand.grid(
+  mtry = c(4, 6, 9), #m=(p)^(1/2)
+  splitrule = c("gini"),  # Specify splitting rule options
+  min.node.size = c(5, 10, 15))  # Specify the minimum node size for terminal node
+
+#training the forest
+set.seed(158)
+rf_rf_down <- train(
+  target ~ ., 
+  data = downsampled_data, 
+  method = "ranger",
+  trControl = control_rf,
+  tuneGrid = tuning_grid_v1,
+  metric = "ROC")
+rf_rf_down
+
+# prediction
+test_df$prediction_rf_down <- predict.train(
+  rf_rf_down, 
+  newdata = test_df, 
+  type = c("raw")
+)
+# confusion matrix
+confusion_rfdown <- confusionMatrix(
+  test_df$target, 
+  test_df$prediction_rf_down, 
+  positive = "Yes", 
+  mode="sens_spec"
+)
+confusion_rfdown
+
+````
+
+Overall, the models of the differently tuned hyperparameters performed very similarly. The values of the tuning grid used for the final model are mtry = 9, splitrule = gini and min.node.size = 15.
+ 
+````{r model ranger evaluation}
+
+# Extract performance metrics from the confusion matrix
+accuracy_rf <- confusion_rfdown$overall['Accuracy']
+sensitivity_rf <- confusion_rfdown$byClass['Sensitivity']
+specificity_rf <- confusion_rfdown$byClass['Specificity']
+precision_rf <- confusion_rfdown$byClass['Pos Pred Value']
+recall_rf <- confusion_rfdown$byClass['Sensitivity']
+F1_rf <- 2 * (precision_rf * recall_rf) / (precision_rf + recall_rf)
+
+# Model evaluation
+predicted_probs_rf <- predict(rf_rf_down, newdata = test_df, type = "prob")[, "Yes"]
+
+# Create a precision-recall curve
+pr_curve_rfdown <- evalmod(scores = predicted_probs_rf, labels = as.factor(test_df$target), mode = "prcroc")
+
+# Plot the Precision-Recall curve
+plot(pr_curve_rfdown, main = "Precision-Recall Curve", col = "red", lwd = 2)
+
+# plot the ROC curve and compute the AUC
+roc_curve_rfdown <- roc(response = as.factor(test_df$target), predictor = predicted_probs_rf)
+roc_auc_rfdown <- auc(roc_curve_rfdown)
+roc_auc_rfdown
+````
+The model performance was robust with an accuracy of 79.39% and specificity of 98.6%. However, sensitivity performed even worse than the model using the "rpart" method with a value of 18.47% for the prediction in the test data set. The area under the ROC curve is 88.35%, which indicates to model's ability to effectively discriminate between classes.
+
+## weithed ranger model
+Another way to account for the unbalanced classes in the data set is the use of class weights. This way, we do not have to discard observations but we can make use of all of them in the data. The weight introduced for the class "Yes" (having had a herat disease) is 20, since it is approximately the result of the ratio of the prevalence of the two classes to each other (ca. = 0.95/0.05). Meanwhile, "no" is left with a weight of 1. At the same time we are using the tuning grid that has presented itself as the most favorable in the last model (mtry = 9, splitrule = gini and mmin.node.size = 15).
+
+```{r weighted ranger}
+# Define the weighting vector based on the imbalance in the target variable
+weights <- ifelse(train_df$target == "Yes", 20, 1)
+
+#tuning grid
+tuning_grid_v2 <- expand.grid(
+  mtry = c(9),
+  splitrule = c("gini"),  
+  min.node.size = c(15))
+
+# Training the random forest model with weighting
+set.seed(289)
+rf_rf_weight <- train(
+  target ~ ., 
+  data = train_df, 
+  method = "ranger",
+  trControl = control_rf,
+  tuneGrid = tuning_grid_v2,
+  metric = "ROC",
+  weights = weights
+)
+
+# prediction
+test_df$prediction_rfw <- predict.train(
+  rf_rf_weight, 
+  newdata = test_df, 
+  type = c("raw")
+)
+# confusion matrix
+confusion_rfw <- confusionMatrix(
+  test_df$target, 
+  test_df$prediction_rfw, 
+  positive = "Yes", 
+  mode="sens_spec"
+)
+confusion_rfw
+```
+
+
+````{r evaluation of the weighted ranger model}
+# Extract performance metrics from the confusion matrix
+accuracy_rfw <- confusion_rfw$overall['Accuracy']
+sensitivity_rfw <- confusion_rfw$byClass['Sensitivity']
+specificity_rfw <- confusion_rfw$byClass['Specificity']
+precision_rfw <- confusion_rfw$byClass['Pos Pred Value']
+recall_rfw <- confusion_rfw$byClass['Sensitivity']
+F1_rfw <- 2 * (precision_rfw * recall_rfw) / (precision_rfw + recall_rfw)
+
+# Model evaluation
+predicted_probs_rfw <- predict(rf_rf_weight, newdata = test_df, type = "prob")[, "Yes"]
+
+# Create a precision-recall curve
+pr_curve_rfw <- evalmod(scores = predicted_probs_rfw, labels = as.factor(test_df$target), mode = "prcroc")
+
+# Plot the Precision-Recall curve
+plot(pr_curve_rfw, main = "Precision-Recall Curve", col = "red", lwd = 2)
+
+# plot the ROC curve and compute the AUC
+roc_curve_rfw <- roc(response = as.factor(test_df$target), predictor = predicted_probs_rfw)
+roc_auc_rfw <- auc(roc_curve_rfw)
+roc_auc_rfw
+````
+The accuracy of the model on the test data set is 93.97% and specificity is 97.09%, which is very high. With the model we also reached a sensitivity of 45.57%, which is considerably higher than the models before. The area under the ROC curve is 88.41%, which means the discriminatory ability of the model is similar to the ones before.
+
+## Boosted trees
+Another possiblity is to build boosted regression trees with XGBoost. Gradient boosting first builds weak learners in a sequential manner, with each subsequent learner aiming to correct the errors of its predecessors. XGBoost, in particular, introduces several innovations to enhance the efficiency and effectiveness of gradient boosting, such as a regularized objective function or tree pruning to prevent overfitting.
+
+````{r set up for xgboost}
+
+#Define the control parameters for hyperparameter tuning using caret
+xgbGrid <- expand.grid(
+  nrounds = c(150),  # Number of boosting rounds
+  eta = c(0.05, 0.1),     # Learning rate
+  max_depth = c(4), # Maximum depth of a tree
+  gamma = c(0),      # Minimum loss reduction required for a split
+  colsample_bytree = c(1), # Subsample ratio of columns for each tree
+  min_child_weight = c(1),   # Minimum sum of instance weight needed in a child
+  subsample = c(0.8)         # Subsample ratio of the training instances
+)
+
+#Set the training control
+train_control <- trainControl(
+  method = "cv",
+  number = 5,
+  verboseIter = TRUE,
+  returnData = FALSE,
+  returnResamp = "none",
+  classProbs = TRUE,
+  summaryFunction = twoClassSummary,
+  allowParallel = TRUE
+)
+
+````
+
+We are setting up hyperparameter tuning for an XGBoost model, including among others the parameters for the number of boosting rounds (nrounds), the learning rate (eta), the maximum depth of a tree (max_depth), the minimum loss reduction required for a split (gamma), and the subsample ratio of columns for each tree (colsample_bytree). The train_control object specifies the cross validation parameters, which include the method "cv" (stands for cross validation) with five folds, verbose iteration logging (verboseIter = TRUE), returning class probabilities (classProbs = TRUE), specifying a summary function for performance evaluation (summaryFunction = twoClassSummary), and allowing parallel processing for faster computation (allowParallel = TRUE). Furthermore, we are accounting for the imbalanced data set by using weights in the model. The weight used is the ratio of the occurrences in the minority class to the ones in the majority class. This results in a weight of 0.053. 
+
+````{r weighted xgboost model}
+
+set.seed(333) # Ensure reproducibility
+xgb_model_log <-   train(
+  target ~ ., data = train_df,
+  method = "xgbTree",
+  trControl = train_control,
+  tuneGrid = xgbGrid,
+  scale_pos_weight = 0.053, # 0.05/0.095 = 0.053
+  metric = "ROC"
+)
+
+xgb_model_log
+
+#Print the best-tuned model parameters
+print(xgb_model_log$bestTune)
+
+#Predict on the test set
+test_pred_prob <- predict(xgb_model_log, newdata = test_df %>% dplyr::select(-target), type = "prob")
+
+test_pred <- ifelse(test_pred_prob[, "Yes"] > 0.5, "Yes", "No")
+
+#Confusion matrix and model evaluation
+confusion_xgb <- confusionMatrix(as.factor(test_pred), test_df$target, positive = "Yes")
+print(confusion_xgb)
+````
+
+The performance measures of this model show a drastic increase in sensitivity. We were able to reach a value of 77.95%, which is considerably higher than the sensitivity of the next best model of 45.57% of the weighted random forest using ranger. The other performance measures are also good with an accuracy of 81.9% and specificity of 82.13%. The area under the ROC curve is high with 88.72%.
+
+````{r model evaluation xgboost}
+# Extract performance metrics from the confusion matrix
+accuracy_xgb <- confusion_xgb$overall['Accuracy']
+sensitivity_xgb <- confusion_xgb$byClass['Sensitivity']
+specificity_xgb <- confusion_xgb$byClass['Specificity']
+precision_xgb <- confusion_xgb$byClass['Pos Pred Value']
+recall_xgb <- confusion_xgb$byClass['Sensitivity']
+F1_xgb <- 2 * (precision_xgb * recall_xgb) / (precision_xgb + recall_xgb)
+
+# Model evaluation
+predicted_probs_xgb <- predict(xgb_model_log, newdata = test_df, type = "prob")[, "Yes"]
+
+# Create a precision-recall curve
+pr_curve_xgb <- evalmod(scores = predicted_probs_xgb, labels = as.factor(test_df$target), mode = "prcroc")
+
+# Plot Precision-Recall curve
+plot(pr_curve_xgb, main = "Precision-Recall Curve", col = "red", lwd = 2)
+ggsave ("03_output_data/ROC_curve.png", bg = "white")
+
+# plot the ROC curve and compute the AUC
+roc_curve_xgb <- roc(response = as.factor(test_df$target), predictor = predicted_probs_xgb)
+roc_auc_xgb <- auc(roc_curve_xgb)
+roc_auc_xgb
+
+````
+
+In the next step, we inlcude a second boosted tree model with a tuning grid for the hyperparameter. We based our exploration on the optimal values obtained from the last XGBoost model, which had a maximum tree depth of 4 and a learning rate of 0.1. This is why the value of 0.05 for the learning rate is substituted with 0.2. We expand the parameter grid further to encompass additional combinations to test the robustness of the optimal values obtained in last model's tuning grid.
+
+````{r tuning hyperparameter in xgboost}
+#Define the control parameters for hyperparameter tuning using caret
+xgbGrid <- expand.grid(
+  nrounds = c(150),  
+  eta = c(0.1, 0.2),     
+  max_depth = c(2, 4, 6, 8),
+  gamma = c(0),      
+  colsample_bytree = c(1),
+  min_child_weight = c(1),   
+  subsample = c(0.8)
+)
+ 
+set.seed(444) # Ensure reproducibility
+xgb_model2 <-   train(
+  target ~ ., data = train_df,
+  method = "xgbTree",
+  trControl = train_control,
+  tuneGrid = xgbGrid,
+  scale_pos_weight = 0.053, # 0.05/0.095 = 0.053
+  metric = "ROC"
+)
+
+xgb_model2
+````
+
+The best performing model is the one with a learning rate of 0.1 and a maximum tree depth of 4. This confirms the optimal values from before. Since the hyperparameter is constructed the same way for the final and best model in this round as in the round before, the performance measures do not vary, as indicated below.  
+
+````{r}
+#Print the best-tuned model parameters
+print(xgb_model2$bestTune)
+
+#Predict on the test set
+test_pred_prob <- predict(xgb_model2, newdata = test_df %>% dplyr::select(-target), type = "prob")
+
+test_pred <- ifelse(test_pred_prob[, "Yes"] > 0.5, "Yes", "No")
+
+#Confusion matrix and model evaluation
+confusion_xgb2 <- confusionMatrix(as.factor(test_pred), test_df$target, positive = "Yes")
+print(confusion_xgb2)
+
+# Extract performance metrics from the confusion matrix
+accuracy_xgb2 <- confusion_xgb2$overall['Accuracy']
+sensitivity_xgb2 <- confusion_xgb2$byClass['Sensitivity']
+specificity_xgb2 <- confusion_xgb2$byClass['Specificity']
+precision_xgb2 <- confusion_xgb2$byClass['Pos Pred Value']
+recall_xgb2 <- confusion_xgb2$byClass['Sensitivity']
+F1_xgb2 <- 2 * (precision_xgb2 * recall_xgb2) / (precision_xgb2 + recall_xgb2)
+
+# Model evaluation
+predicted_probs_xgb2 <- predict(xgb_model_log, newdata = test_df, type = "prob")[, "Yes"]
+
+# Create a precision-recall curve
+pr_curve_xgb2 <- evalmod(scores = predicted_probs_xgb2, labels = as.factor(test_df$target), mode = "prcroc")
+
+# Plot Precision-Recall curve
+plot(pr_curve_xgb2, main = "Precision-Recall Curve", col = "red", lwd = 2)
+ggsave ("03_output_data/ROC_curve_xgb2.png", bg = "white")
+
+# plot the ROC curve and compute the AUC
+roc_curve_xgb2 <- roc(response = as.factor(test_df$target), predictor = predicted_probs_xgb2)
+roc_auc_xgb2 <- auc(roc_curve_xgb2)
+roc_auc_xgb2
+
+````
+Since the best fit model is the one we defined earlier, the confusion matrix and ROC curve show the same values.
+
+## model comparison
+For a comprehensive model comparison a table of the performance measures for each model is included in this section.
+
+````{r model comparison}
+
+# Create the data frame to store model metrics
+model_metrics <- data.frame(
+  Model = c("rf_caret_down", "rf_rf_down", "rf_rf_weight", "xgb_model_log", "xgb_model2"),
+  Accuracy = c(accuracy_rpart, accuracy_rf, accuracy_rfw, accuracy_xgb, accuracy_xgb2),
+  Sensitivity = c(sensitivity_rpart, sensitivity_rf, sensitivity_rfw, sensitivity_xgb, sensitivity_xgb2),
+  Specificity = c(specificity_rpart, specificity_rf, specificity_rfw, specificity_xgb, specificity_xgb2),
+  Precision = c(precision_rpart, precision_rf, precision_rfw, precision_xgb, precision_xgb2),
+  F1_Score = c(F1_rpart, F1_rf, F1_rfw, F1_xgb, F1_xgb2),
+  AUC = c(roc_auc_rpart, roc_auc_rfdown, roc_auc_rfw, roc_auc_xgb, roc_auc_xgb2)
+)
+
+# Render table using kable and kableExtra
+kable(model_metrics, format = "html") %>%
+  kable_styling(full_width = FALSE) %>%
+  add_header_above(c(" " = 1, "Model Metrics" = 6))
+
+# Rename the columns
+colnames(model_metrics) <- c("Model", "Accuracy", "Sensitivity", "Specificity", "Precision", "F1 Score", "AUC")
+
+# Print
+print(model_metrics)
+````
+
+It is observable that accuracy is the highest for the weighted ranger model, followed by the downsampled rpart model. Sensitivity is the highest for the weighted xgboost model, where conversely specificity decreased, followed by the weighted ranger model. The F1 score is the mean of precision and recall, which shows these two aspects (sensitivity and precision) in one measure. The F1 score is by far the highest for the weighted ranger model, followed by the boosted models. Overall, we developed some models with high performance metrics. However, as our goal is to especially reach high sensitivity in our model, it still needs to be improved.
+
+## cutoff points adjustment  
+we identified an opportunity for improvements in sensitivity, since it is particularly crucial in the context of accurately predicting individuals with a history of heart disease. To increase sensitivity it is possible to adjust the cutoff points for the probability of an observation being classified as positive. Firstly, we fine-tune the cutoff points of the weighted ranger model. In our initial attempt, we shifted the probability threshold, above which an observation is classified as "yes," from 50% to 45%.
+
+````{r cutoff points weighted ranger}
+# prediction
+test_df$prediction_rfw_cf <- predict.train(
+  rf_rf_weight, 
+  newdata = test_df, 
+  type = c("prob")
+)
+
+#adjusting class probabilities
+test_df$prediction_rfw_cf <- ifelse(test_df$prediction_rfw_cf[, "Yes"] > 0.45, "Yes", "No")
+
+# new confusion matrix
+confusion_rfw_cf <- confusionMatrix(
+  test_df$target, 
+  as.factor(test_df$prediction_rfw_cf), 
+  positive = "Yes", 
+  mode="sens_spec"
+)
+
+confusion_rfw_cf
+````
+
+Interestingly, sensitivity decreases to 41.87% compared to the original weighted ranger model, while specificity increased slightly (+0.17%). We are trying it again with an even lower threshold of 30%.
+
+````{r next cutoff points wranger}
+# prediction
+test_df$prediction_rfw_cf <- predict.train(
+  rf_rf_weight, 
+  newdata = test_df, 
+  type = c("prob")
+)
+
+#adjusting class probabilities
+test_df$prediction_rfw_cf <- ifelse(test_df$prediction_rfw_cf[, "Yes"] > 0.30, "Yes", "No")
+
+# new confusion matrix
+confusion_rfw_cf2 <- confusionMatrix(
+  test_df$target, 
+  as.factor(test_df$prediction_rfw_cf), 
+  positive = "Yes", 
+  mode="sens_spec"
+)
+
+confusion_rfw_cf2
+
+accuracy_rfw_cf <- confusion_rfw_cf2$overall['Accuracy']
+sensitivity_rfw_cf <- confusion_rfw_cf2$byClass['Sensitivity']
+specificity_rfw_cf <- confusion_rfw_cf2$byClass['Specificity']
+precision_rfw_cf <- confusion_rfw_cf2$byClass['Pos Pred Value']
+recall_rfw_cf <- confusion_rfw_cf2$byClass['Sensitivity']
+F1_rfw_cf <- 2 * (precision_rfw_cf * recall_rfw_cf) / (precision_rfw_cf + recall_rfw_cf)
+````
+
+Here, we can see a further decrease of sensitivity to 27.04%, while specificity is increasing again. The accuracy of the model also decreased slightly. This result is contrary to our expectations. One reason could be that with lowering the cutoff point more observations are classified as positive and the number of observations being correctly classified as positive decreases. This could indicate overfitting of the model.
+
+In a second attempt of improving the sensitivity, we use the gradient boosted model. As for the weighted random forest (ranger) model the first adjusted cutoff point is set to 45%.   
+
+````{r cutoff adjustement xgboost}
+
+#adjusting probabilities
+test_pred1 <- ifelse(test_pred_prob[, "Yes"] > 0.45, "Yes", "No")
+
+#Confusion matrix and model evaluation
+confusion_xgb1 <- confusionMatrix(as.factor(test_pred1), test_df$target, positive = "Yes")
+
+print(confusion_xgb1)
+````
+
+An increase of sensitivity from 77.95% to 81.69% is observable with a slight increase of specificity as well. Since our goal is to correctly predict at least 90% of all observations having had a heart disease as having had a heart disease, we further tune to probabilities.
+
+````{r }
+#adjusting probabilities
+test_pred2 <- ifelse(test_pred_prob[, "Yes"] > 0.30, "Yes", "No")
+
+#Confusion matrix and model evaluation
+confusion_xgb_cf <- confusionMatrix(as.factor(test_pred2), test_df$target, positive = "Yes")
+print(confusion_xgb_cf)
+
+# Extract performance metrics from the confusion matrix
+accuracy_xgb_cf <- confusion_xgb_cf$overall['Accuracy']
+sensitivity_xgb_cf <- confusion_xgb_cf$byClass['Sensitivity']
+specificity_xgb_cf <- confusion_xgb_cf$byClass['Specificity']
+precision_xgb_cf <- confusion_xgb_cf$byClass['Pos Pred Value']
+recall_xgb_cf <- confusion_xgb_cf$byClass['Sensitivity']
+F1_xgb_cf <- 2 * (precision_xgb_cf * recall_xgb_cf) / (precision_xgb_cf + recall_xgb_cf)
+
+test_pred_numeric <- ifelse(test_pred2 == "Yes", 1, 0)
+
+roc_curve_xgb_cf <- roc(response = as.factor(test_df$target), predictor = test_pred_numeric)
+roc_auc_xgb_cf <- auc(roc_curve_xgb_cf)
+roc_auc_xgb_cf
+````
+
+After trying out different values for the probability cutoff of the positive class, the results show that with a probability cutoff of above 30% for "Yes" a sensitivity of 90.4% is achieved. This means that the model correctly predicts 90% of the actual cases as having a heart disease. However, the trade off between sensitivity and specificity is shown, since specificity decreased to 64.99%. Furthermore, we can observe a diminishing precision, which seems plausible, as more observations are classified as positive, the ratio of the true positives to all classified as positive decreases. The high sensitivity also took a tole on accuracy, as it drastically decreased to 66.26%.
+
+## Final model selection
+The graph below shows that we tend to have increased the sensitivity in our model selection process. However, the mean curve for accuracy is concave, indicating that after a first increase up to a certain point we lost accuracy again.
+
+```{r complexity graph, echo=FALSE}
+# prepare plot data
+# Extract performance metrics from the confusion matrix
+# rpart downsample
+# Prepare data for rpart downsample
+met_rpart_data <- data.frame(
+  accuracy = confusion_rfcaret$overall["Accuracy"],
+  sensitivity = confusion_rfcaret$byClass["Sensitivity"],
+  specificity = confusion_rfcaret$byClass["Specificity"],
+  model = as.factor("rpart")
+)
+
+# Prepare data for ranger downsample
+met_ranger_data <- data.frame(
+  accuracy = confusion_rfdown$overall["Accuracy"],
+  sensitivity = confusion_rfdown$byClass["Sensitivity"],
+  specificity = confusion_rfdown$byClass["Specificity"],
+  model = as.factor("ranger")) 
+ 
+# Prepare data for weighted ranger
+met_wranger_data <- data.frame(
+  accuracy = confusion_rfw$overall["Accuracy"],
+  sensitivity = confusion_rfw$byClass["Sensitivity"],
+  specificity = confusion_rfw$byClass["Specificity"],
+  model = as.factor("ranger weighted")) 
+  
+# Prepare data for XGB weighted
+met_xgb_data <- data.frame(
+  accuracy = accuracy_xgb,
+  sensitivity = sensitivity_xgb,
+  specificity = specificity_xgb,
+  model = as.factor("xgb weighted"))
+
+# Prepare data for XGB tuned
+met_xgb2_data <- data.frame(
+  accuracy = accuracy_xgb2,
+  sensitivity = sensitivity_xgb2,
+  specificity = specificity_xgb2,
+  model = as.factor("xgb tuned"))
+
+# Prepare data for ranger cutoff
+met_wranger_cf_data <- data.frame(
+  accuracy = confusion_rfw_cf$overall["Accuracy"],
+  sensitivity = confusion_rfw_cf$byClass["Sensitivity"],
+  specificity = confusion_rfw_cf$byClass["Specificity"],
+  model = as.factor("ranger cutoff"))
+
+# Prepare data for XGB cutoff
+met_xgb_cf_data <- data.frame(
+  accuracy = accuracy_xgb_cf,
+  sensitivity = sensitivity_xgb_cf,
+  specificity = specificity_xgb_cf,
+  model = as.factor("xgb cutoff"))
+
+# Combine the data frames
+met_plot_data <- rbind(met_rpart_data, met_ranger_data, met_wranger_data, met_xgb_data, met_xgb2_data, met_wranger_cf_data, met_xgb_cf_data)
+
+# Convert model to numeric factor
+met_plot_data$model <- as.numeric(as.factor(met_plot_data$model))
+unique_models <- unique(met_plot_data$model)
+custom_labels <- c("rpart", "ranger downsampled", "ranger weighted", "xgb weighted", "xgb tuned", "ranger cutoff","xgb cutoff")
+
+# Plot for accuracy and sensitivity with quadratic smoothing
+ggplot(met_plot_data, aes(x = model)) +
+  geom_point(aes(y = accuracy, color = "Accuracy"), size = 3, shape = 19) +
+  geom_smooth(aes(y = accuracy, color = "Accuracy"), method = "lm", formula = y ~ poly(x, 2), se = FALSE) +
+  geom_point(aes(y = sensitivity, color = "Sensitivity"), size = 3, shape = 17) +
+  geom_smooth(aes(y = sensitivity, color = "Sensitivity"), method = "lm", formula = y ~ poly(x, 2), se = FALSE) +
+  labs(x = "Model", y = "Value", color = "Metric") +
+  scale_x_continuous(breaks = unique_models, labels = custom_labels) +  # Change tick labels
+  theme_minimal() +
+  scale_color_viridis_d() +  # Use viridis color scale for points and lines
+  ggtitle("Evaluation Metrics across Models")
+
+
+```
+
+
+In the table below, we compare the two best performing models, the weighted xgboost model with adjusted cutoff points and the weighted ranger model. We can see that sensitivity is higher for the xgboost model due to the adjustment of the cutoff points. However, all other performance measures are better for the weighted ranger model without adjusted cutoff points. This poses a challenge as we want to achieve a balance between constructing a conservative model that prioritizes sensitivity and a model that maintains overall accuracy and precision. We therefore, would recommend using both models complementary to predict heart disease to make use of the conservatism of the one model and the accuracy of the other. 
+
+
+```{r model selection}
+# Create the data frame to store model metrics
+model_metrics <- data.frame(
+  Model = c("model_xgb_cf", "rf_rf_weight"),
+  Accuracy = c(accuracy_xgb_cf, accuracy_rfw),
+  Sensitivity = c(sensitivity_xgb_cf, sensitivity_rfw),
+  Specificity = c(specificity_xgb_cf, specificity_rfw),
+  Precision = c(precision_xgb_cf, precision_rfw),
+  F1_Score = c(F1_xgb_cf, F1_rfw),
+  AUC = c(roc_auc_xgb_cf, roc_auc_rfw)
+)
+
+# Render table using kable and kableExtra
+kable(model_metrics, format = "html") %>%
+  kable_styling(full_width = FALSE) %>%
+  add_header_above(c(" " = 1, "Model Metrics" = 6))
+
+# Rename the columns
+colnames(model_metrics) <- c("Model", "Accuracy", "Sensitivity", "Specificity", "Precision", "F1 Score", "AUC")
+
+# Print
+print(model_metrics)
+```
+
+
+## Variable importance
+The following section explores the variable importance from the different models. Unfortunately, it was not possible to extract the most important variables form the ranger models. However, we can draw conclusions from the other models used. 
+```{r variable importance, echo=FALSE}
+# Calculate variable importance
+var_imp_car <- varImp(rf_caret_down)
+
+# Convert var_imp_car to a data frame
+var_imp_car <- var_imp_car$importance %>%
+  as.data.frame() %>%
+  mutate(Variable = rownames(.),
+         Importance = Overall,
+         Model = as.factor("rpart")) %>%
+  select(-Overall) %>%
+  filter(row_number() <= 140) %>%
+  mutate(Variable = str_replace_all(Variable, "importance.", "")) %>%
+  mutate(Variable = as.factor(Variable))
+
+# repeat for other models
+# XGboost
+var_imp_xgb_weight <- varImp(xgb_model_log)
+var_imp_xgb_weight <- var_imp_xgb_weight$importance %>%
+  as.data.frame() %>%
+  mutate(Variable = rownames(.),
+         Importance = Overall,
+         Model = as.factor("XGboosted weighted")) %>%
+  select(-Overall) %>%
+  filter(row_number() <= 140) %>%
+  mutate(Variable = str_replace_all(Variable, "importance.", "")) %>%
+  mutate(Variable = as.factor(Variable))
+
+# XGboost tuned
+var_imp_xgb_tuned <- varImp(xgb_model2)
+var_imp_xgb_tuned <- var_imp_xgb_tuned$importance %>%
+  as.data.frame() %>%
+  mutate(Variable = rownames(.),
+         Importance = Overall,
+         Model = as.factor("XGboosted tuned")) %>%
+  select(-Overall) %>%
+  filter(row_number() <= 140) %>%
+  mutate(Variable = str_replace_all(Variable, "importance.", "")) %>%
+  mutate(Variable = as.factor(Variable))
+
+plot_data <- rbind(var_imp_car, var_imp_xgb_weight, var_imp_xgb_tuned)
+
+# Create heat map
+ggplot(plot_data, aes(x = Variable, y = Model, fill = Importance)) +
+  geom_raster() +
+  scale_fill_viridis_c() +
+  theme_minimal() +
+  theme(axis.text.x = element_blank()) +  # Remove tick marks on the x-axis
+  ggtitle("Variable Importance Across Models")
+
+  
+```
+Overall, our analysis encompasses a pool of 142 variables. We present here the variable importance across our models, focusing on the 140 most influential variables. The graphical representation reveals varying degrees of importance attributed to different variables across models, with a notable exception: the consistent significance of the "Had Angina" variable, indicated by the yellow line reaching an importance value of 100 across all models. Presence of this variable implies a history of or current heart disease in an individual, which immediately sets the true target label of the corresponding observations positive.
+
+In contrast, the importance of other variables varies across models. Notably, the rpart-method model demonstrates a more balanced distribution of variable importance, while the XGBoost models assign relatively lower importance to variables other than "Had Angina." Moreover, there is minimal discernible difference among the XGBoost models.
+
+By selectively displaying 140 out of the 142 possible variables, another aspect of model variation emerges: the variability in overall variable selection. Despite the subtle differences in the importance of less influential variables, the exclusion of the two least important variables underscores a distinction between models. This ordered exclusion, based on variable importance, highlights the divergence in the importance of these variables across models, revealing discrepancies not only within selected variables but also in overall variable importance across models.
+
+```{r variable importance rpart}
+top_10_variables <- head(var_imp_car, 10)
+
+# Create a bar chart
+ggplot(top_10_variables, aes(x = Importance, y = reorder(Variable, Importance))) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Importance", y = "Variable", title = "Top 10 Important Variables") +
+  theme_minimal()
+```
+The graph displays the 10 most important variables for the downsampled rpart model. "ChestScan" and "Difficulty Walking" are important indicators. Noticable is the importance of age or variables associated with it, such as "Deaf or hard of hearing", in the model.
+
+```{r variable importance xgb weight}
+top_10_variables <- head(var_imp_xgb_weight, 10)
+
+# Create a bar chart
+ggplot(top_10_variables, aes(x = Importance, y = reorder(Variable, Importance))) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Importance", y = "Variable", title = "Top 10 Important Variables") +
+  theme_minimal()
+```
+This graph shows the 10 most important variables for the first weighted xgboost model. As described before, it is observable that "Had Angina" is the most important one. This is followed by "ChestScan" and "Had Stroke", which seems quite intuitive. Other health variables play a role, such as having diabetes 2 or the BMI. Interestingly, "removed teeth" is quite important, which we already have observed in the process of tuning the models.
+
+Due to this notable importance of the "removed teeth" variable in the rpart-model, we conducted a detailed examination of this variable and its correlation with health. While dental health is occasionally indicative of socioeconomic status, we sought to explore its association with age as we do there is no information on socioeconomic backgrounds in the data set. Primarily, it is evident that the majority of individuals did not undergo tooth extraction before the age of 75. Additionally, within our dataset, only a small minority had all of their teeth removed. Consequently, our analysis indicates that the probability of tooth extraction increases with age, irrespective of the total number of teeth removed. This trend is particularly noticeable among individuals who had 1 to 5 teeth removed. This pattern intuitively reflects the natural aging process, where individuals may experience tooth loss as they grow older, albeit not complete tooth loss. However, it is noteworthy that our variable importance analysis identifies the variable denoting complete tooth removal as one of the top five most significant variables, despite the limited number of observations in this category.
+
+```{r plot age teeth, echo=FALSE}
+# Calculate count of observations for each combination of RemovedTeeth and AgeCategory
+data_counts <- data %>%
+  count(RemovedTeeth, AgeCategory)
+
+# Plot the heatmap
+ggplot(data_counts, aes(x = as.factor(RemovedTeeth), y = as.factor(AgeCategory), fill = n)) +
+  geom_tile() +
+  scale_fill_viridis_c() +  # Choose a color palette (optional)
+  labs(x = "Removed Teeth", y = "Age Category", fill = "Count") +  # Add axis labels
+  theme_minimal() +
+  ggtitle("Relationship of age and removed teeth") # Apply a minimal theme (optional)
+```
+#Conclusion
+We applied several different machine learning models to our problem of predicting heart disease. From our models we can conclude that there are idiosyncrasities within the data that drive our prediction results. The fact that one of our independent variables immediately renders the dependent variable as being true might distort our overall results. However, we can identify other important factors as well. The most relevant for predicting heart disease across models are "Chest Scan" and age. Nevertheless, variable importance differs across models. Other important variables were health issues, such as diabetes, stroke and BMI.
+
+We used different methods to run the models, such as rpart, ranger and xgboost, including downsampling or weighting to acccount for the imbalanced data set. We also took computational costs into account. Both the weighted and unweighted ranger models exhibit very long running times and thereby slow down productive work. While this might not be as relevant in an official work context, it was relevant in the setting of this assignment. As we emphasized being cautious about the health of others, we intended to develop a conservative model with high sensitivity. To achieve this, we expanded the models by adjusting the classification probability cutoff points to 30% (for the positive class). Finally, the best performing models were the weighted xgboost model with adjusted cutoff points and the weighted ranger model. Sensitivity was higher in the xgboost model, while all other performance measures showed better results for the weighted ranger model without adjusted cutoff points. Therefore, we would recommend using both models complementary to predict heart disease to make use of the conservatism of the one model and the accuracy of the other.
+
+# Sources
+Coronary Heart Disease - Causes and Risk Factors | NHLBI, NIH. (n.d.). Coronary Heart Disease - Causes and Risk Factors | NHLBI, NIH. Retrieved February 24, 2024, from https://www.nhlbi.nih.gov/health/coronary-heart-disease/causes
+
+World Health Organization (WHO), Cardiovascular Diseases (CVDs), Fact sheets, 11 June 2021. https://www.who.int/news-room/fact-sheets/detail/cardiovascular-diseases-(cvds). Accessed 28 February 2024
+
+G C, A., M S, A., N, D., D., & Firdaus, R.. (2019). Heart Disease Diagnosis Using Machine Learning. 7(10).
+
+Samineni, P.. (2023). <i>Enhancing Heart Disease Prediction Accuracy through Machine Learning Techniques and Optimization</i>. <i>11</i>(4). https://doi.org/10.3390/pr11041210
+
+Kamboj, M.. (2018). <i>Heart Disease Prediction with Machine Learning Approaches</i>. https://www.ijsr.net/archive/v9i7/SR20724113128.pdf
+
+Woodward, M., Oliphant, J., Lowe, G. D. O., &amp; Tunstall-Pedoe, H.. (2003). <i>Contribution of contemporaneous risk factors to social inequality in coronary heart disease and all causes mortality</i>. <i>36</i>(5). https://doi.org/10.1016/S0091-7435(03)00010-0
+
+Tran D-MT, Lekhak N, Gutierrez K, Moonie S (2021) Risk factors associated with cardiovascular disease among adult Nevadans. PLoS ONE 16(2): e0247105. https://doi.org/10.1371/journal.pone.0247105
+
+Amini, M., Zayeri, F. & Salehi, M. Trend analysis of cardiovascular disease mortality, incidence, and mortality-to-incidence ratio: results from global burden of disease study 2017. BMC Public Health 21, 401 (2021). https://doi.org/10.1186/s12889-021-10429-0
