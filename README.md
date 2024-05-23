@@ -12,8 +12,9 @@ This is a repository to showcase skills, share projects and track my progress in
 - [About](#about)
 - [Portfolio Projects](#portfolio_projects)
   - Python
-    - [Predicting song chracteristics that contribute to song popularity](https://github.com/LluisQN/Data-Analysis-Portfolio/blob/main/Spotify%20popularity.ipynb)
+    - [What characteristics make a song popular in Spotify?](https://github.com/LluisQN/Data-Analysis-Portfolio/blob/main/Spotify%20popularity.ipynb)
   - R
+    - [What are the main factors contributing to heart disease?](https://github.com/LluisQN/Data-Analysis-Portfolio/blob/main/Predicting%20Heart%20Disease.Rmd)
   - PowerBI     
 
 ## Portfolio Projects
