@@ -12,7 +12,7 @@ This is a repository to showcase skills, share projects and track my progress in
 - [About](#about)
 - [Portfolio Projects](#portfolio_projects)
   - Python
-    - Predicting which song features have a largest impact on song popularity in Spotify.
+    - [Predicting song popularity in Spotify]().
   - R
   - PowerBI     
 
