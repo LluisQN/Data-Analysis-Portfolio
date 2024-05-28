@@ -12,9 +12,9 @@ This is a repository to showcase skills, share projects and track my progress in
 - [About](#about)
 - [Portfolio Projects](#portfolio_projects)
   - Python
-    - [Analyzing the characteristics that make a Spotify song popular](#Analyzing the characteristics that make a Spotify song popular)
+    - [Analyzing the characteristics that make a Spotify song popular](##Analyzing the characteristics that make a Spotify song popular)
   - R
-    - [What are the main factors contributing to heart disease?](#Analyzing the causes of heart disease)
+    - [What are the main factors contributing to heart disease?](##Analyzing the causes of heart disease)
 
 ## Portfolio Projects
 In this section I will list data analytics projects briefly describing the technology stack used to solve cases.
